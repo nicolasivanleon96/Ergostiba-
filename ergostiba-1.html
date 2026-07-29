@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>ErgoStiba · Evaluación Postural REBA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#161A20;
+    --panel:#1F2530;
+    --panel-2:#262E3B;
+    --line:#333D4D;
+    --text:#EDEEF1;
+    --muted:#8B93A3;
+    --green:#2FA84F;
+    --amber:#F2A03D;
+    --red:#E5484D;
+    --orange:#FF6A39;
+    --hazard-a:#F2B705;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .hazard-bar{
+    height:6px;
+    width:100%;
+    background:repeating-linear-gradient(135deg,var(--hazard-a) 0 14px,#1a1a1a 14px 28px);
+  }
+  header{
+    padding:18px 18px 10px;
+    border-bottom:1px solid var(--line);
+  }
+  header h1{
+    font-family:'Barlow Condensed',sans-serif;
+    font-weight:700;
+    font-size:28px;
+    letter-spacing:0.5px;
+    margin:0;
+    text-transform:uppercase;
+  }
+  header h1 span{color:var(--orange);}
+  header p{
+    margin:4px 0 0;
+    color:var(--muted);
+    font-size:13px;
+  }
+  nav.tabs{
+    display:flex;
+    gap:6px;
+    padding:12px 14px 0;
+    overflow-x:auto;
+  }
+  nav.tabs button{
+    flex:1;
+    background:var(--panel);
+    color:var(--muted);
+    border:1px solid var(--line);
+    border-bottom:none;
+    padding:10px 8px;
+    font-family:'Barlow Condensed',sans-serif;
+    font-size:16px;
+    font-weight:600;
+    letter-spacing:0.4px;
+    text-transform:uppercase;
+    border-radius:8px 8px 0 0;
+    cursor:pointer;
+  }
+  nav.tabs button.active{
+    background:var(--panel-2);
+    color:var(--text);
+    border-color:var(--orange);
+    border-bottom:2px solid var(--panel-2);
+  }
+  main{padding:0 14px 40px;}
+  .card{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:0 0 10px 10px;
+    padding:14px;
+  }
+  .view{display:none;}
+  .view.active{display:block;}
+  .video-wrap{
+    position:relative;
+    width:100%;
+    aspect-ratio:3/4;
+    background:#000;
+    border-radius:10px;
+    overflow:hidden;
+    border:1px solid var(--line);
+  }
+  video, canvas.overlay{
+    position:absolute;
+    top:0;left:0;
+    width:100%;height:100%;
+    object-fit:cover;
+  }
+  canvas.overlay{pointer-events:none;}
+  .cam-msg{
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:20px;
+    color:var(--muted);font-size:14px;
+  }
+  .gauge-row{
+    display:flex;align-items:center;gap:16px;
+    margin-top:14px;
+  }
+  .gauge{
+    width:88px;height:88px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;
+    background:conic-gradient(var(--green) 0deg, var(--green) 120deg, var(--amber) 120deg, var(--amber) 240deg, var(--red) 240deg, var(--red) 360deg);
+    position:relative;
+  }
+  .gauge::before{
+    content:'';
+    position:absolute;inset:8px;
+    border-radius:50%;
+    background:var(--panel-2);
+  }
+  .gauge .needle{
+    position:absolute;
+    width:3px;height:34px;
+    background:#fff;
+    top:10px;left:50%;
+    transform-origin:bottom center;
+    transform:translateX(-50%) rotate(0deg);
+    border-radius:2px;
+    box-shadow:0 0 4px rgba(0,0,0,0.6);
+    transition:transform 0.25s ease;
+  }
+  .gauge-label{
+    font-family:'Barlow Condensed',sans-serif;
+    font-size:22px;font-weight:700;text-transform:uppercase;
+  }
+  .gauge-sub{color:var(--muted);font-size:12.5px;margin-top:2px;}
+  .badges{
+    display:grid;grid-template-columns:repeat(3,1fr);
+    gap:8px;margin-top:14px;
+  }
+  .badge{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:8px 6px;
+    text-align:center;
+  }
+  .badge .k{
+    font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;
+  }
+  .badge .v{
+    font-family:'JetBrains Mono',monospace;
+    font-size:17px;font-weight:700;margin-top:2px;
+  }
+  .badge.g .v{color:var(--green);}
+  .badge.a .v{color:var(--amber);}
+  .badge.r .v{color:var(--red);}
+  .btn-row{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+  button.action{
+    border:none;border-radius:8px;
+    padding:12px 14px;
+    font-family:'Barlow Condensed',sans-serif;
+    font-size:15px;font-weight:600;letter-spacing:0.3px;
+    text-transform:uppercase;
+    cursor:pointer;
+    flex:1;
+    min-width:120px;
+  }
+  .btn-primary{background:var(--orange);color:#1a1108;}
+  .btn-outline{background:transparent;color:var(--text);border:1px solid var(--line) !important;}
+  .btn-stop{background:var(--red);color:#fff;}
+  .btn-secondary{background:var(--panel);color:var(--text);border:1px solid var(--line);}
+  .rec-status{
+    display:flex;align-items:center;gap:8px;margin-top:12px;
+    font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--muted);
+  }
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);}
+  .dot.live{background:var(--red);animation:pulse 1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+  .note{
+    font-size:12.5px;color:var(--muted);
+    margin-top:14px;padding-top:12px;border-top:1px solid var(--line);
+    line-height:1.5;
+  }
+  .session-summary{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;
+  }
+  .session-box{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;
+  }
+  .session-box h4{
+    margin:0 0 8px;font-family:'Barlow Condensed',sans-serif;font-size:15px;text-transform:uppercase;color:var(--orange);
+  }
+  .session-box .row{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;color:var(--muted);}
+  .session-box .row b{color:var(--text);font-family:'JetBrains Mono',monospace;}
+  canvas.chart{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-top:14px;padding:8px;}
+  .reco{
+    margin-top:14px;background:var(--panel);border-left:3px solid var(--orange);
+    border-radius:6px;padding:10px 12px;font-size:13.5px;line-height:1.6;
+  }
+  .reco b{color:var(--orange);}
+  .upload-row{display:flex;gap:8px;margin-top:10px;}
+  input[type=file]{display:none;}
+  select{
+    background:var(--panel);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:8px;font-family:'Inter',sans-serif;font-size:13px;
+  }
+</style>
+</head>
+<body>
+<div class="hazard-bar"></div>
+<header>
+  <h1>Ergo<span>Stiba</span></h1>
+  <p>Evaluación postural REBA simplificada · cámara en vivo y foto · comparativo con/sin exoesqueleto</p>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="live">En vivo</button>
+  <button class="tab-btn" data-tab="photo">Foto</button>
+  <button class="tab-btn" data-tab="report">Informe</button>
+</nav>
+
+<main>
+  <!-- LIVE VIEW -->
+  <section class="view active card" id="view-live">
+    <div class="video-wrap" id="live-wrap">
+      <video id="video" playsinline muted></video>
+      <canvas class="overlay" id="overlay"></canvas>
+      <div class="cam-msg" id="cam-msg">Toca "Activar cámara" para iniciar la detección de postura.</div>
+    </div>
+
+    <div class="gauge-row">
+      <div class="gauge" id="gauge"><div class="needle" id="needle"></div></div>
+      <div>
+        <div class="gauge-label" id="gauge-label">SIN DATOS</div>
+        <div class="gauge-sub" id="gauge-sub">Activa la cámara para comenzar</div>
+      </div>
+    </div>
+
+    <div class="badges">
+      <div class="badge" id="b-trunk"><div class="k">Tronco</div><div class="v">--°</div></div>
+      <div class="badge" id="b-neck"><div class="k">Cuello</div><div class="v">--°</div></div>
+      <div class="badge" id="b-arms"><div class="k">Brazos</div><div class="v">--°</div></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="action btn-primary" id="btn-cam">Activar cámara</button>
+    </div>
+
+    <div class="btn-row" style="margin-top:8px;">
+      <select id="session-type">
+        <option value="sin">Sesión: Sin exoesqueleto</option>
+        <option value="con">Sesión: Con exoesqueleto</option>
+      </select>
+      <button class="action btn-secondary" id="btn-record" disabled>Iniciar grabación</button>
+      <button class="action btn-stop" id="btn-stop" disabled>Detener</button>
+    </div>
+
+    <div class="rec-status">
+      <div class="dot" id="rec-dot"></div>
+      <span id="rec-text">Sin grabación activa</span>
+    </div>
+
+    <div class="note">
+      La cámara y el análisis se procesan localmente en el celular; el video no se envía a ningún servidor. Esta herramienta es un apoyo visual de referencia y no reemplaza la evaluación ergonómica certificada de un profesional (REBA/RULA completo requiere además carga manipulada, agarre y evaluación de piernas).
+    </div>
+  </section>
+
+  <!-- PHOTO VIEW -->
+  <section class="view card" id="view-photo">
+    <div class="video-wrap" id="photo-wrap">
+      <canvas id="photo-canvas" style="width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0;"></canvas>
+      <div class="cam-msg" id="photo-msg">Toma o sube una foto para analizar la postura.</div>
+    </div>
+    <div class="upload-row">
+      <button class="action btn-primary" id="btn-snap">Capturar con cámara</button>
+      <button class="action btn-secondary" id="btn-upload">Subir foto</button>
+      <input type="file" id="file-input" accept="image/*">
+    </div>
+
+    <div class="gauge-row">
+      <div class="gauge" id="gauge-p"><div class="needle" id="needle-p"></div></div>
+      <div>
+        <div class="gauge-label" id="gauge-label-p">SIN DATOS</div>
+        <div class="gauge-sub" id="gauge-sub-p">Sin foto analizada</div>
+      </div>
+    </div>
+
+    <div class="badges">
+      <div class="badge" id="bp-trunk"><div class="k">Tronco</div><div class="v">--°</div></div>
+      <div class="badge" id="bp-neck"><div class="k">Cuello</div><div class="v">--°</div></div>
+      <div class="badge" id="bp-arms"><div class="k">Brazos</div><div class="v">--°</div></div>
+    </div>
+  </section>
+
+  <!-- REPORT VIEW -->
+  <section class="view card" id="view-report">
+    <div class="session-summary">
+      <div class="session-box">
+        <h4>Sin exoesqueleto</h4>
+        <div class="row"><span>Duración</span><b id="r-sin-dur">--</b></div>
+        <div class="row"><span>% tiempo en rojo</span><b id="r-sin-red">--</b></div>
+        <div class="row"><span>% tiempo en amarillo</span><b id="r-sin-amber">--</b></div>
+        <div class="row"><span>% tiempo en verde</span><b id="r-sin-green">--</b></div>
+        <div class="row"><span>Tronco prom.</span><b id="r-sin-trunk">--</b></div>
+        <div class="row"><span>Cuello prom.</span><b id="r-sin-neck">--</b></div>
+        <div class="row"><span>Brazos prom.</span><b id="r-sin-arms">--</b></div>
+      </div>
+      <div class="session-box">
+        <h4>Con exoesqueleto</h4>
+        <div class="row"><span>Duración</span><b id="r-con-dur">--</b></div>
+        <div class="row"><span>% tiempo en rojo</span><b id="r-con-red">--</b></div>
+        <div class="row"><span>% tiempo en amarillo</span><b id="r-con-amber">--</b></div>
+        <div class="row"><span>% tiempo en verde</span><b id="r-con-green">--</b></div>
+        <div class="row"><span>Tronco prom.</span><b id="r-con-trunk">--</b></div>
+        <div class="row"><span>Cuello prom.</span><b id="r-con-neck">--</b></div>
+        <div class="row"><span>Brazos prom.</span><b id="r-con-arms">--</b></div>
+      </div>
+    </div>
+
+    <canvas class="chart" id="chart-risk" height="200"></canvas>
+    <canvas class="chart" id="chart-angles" height="200"></canvas>
+
+    <div class="reco" id="reco-box">
+      Graba al menos una sesión "sin exoesqueleto" y una "con exoesqueleto" en la pestaña <b>En vivo</b> para generar aquí las recomendaciones automáticas.
+    </div>
+
+    <div class="btn-row" style="margin-top:14px;">
+      <button class="action btn-secondary" id="btn-reset">Borrar sesiones</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// ---------- Estado global ----------
+let detector = null;
+let modelReady = false;
+let stream = null;
+let rafId = null;
+let recording = false;
+let currentSessionType = null;
+let sessionStartTime = null;
+let sessions = { sin: [], con: [] }; // cada muestra: {t, trunk, neck, arms, level}
+
+const LEVEL = { GREEN: 0, AMBER: 1, RED: 2 };
+const LEVEL_COLOR = { 0: '#2FA84F', 1: '#F2A03D', 2: '#E5484D' };
+const LEVEL_NAME = { 0: 'POSTURA CORRECTA', 1: 'RIESGO MODERADO', 2: 'RIESGO ALTO' };
+
+// ---------- Utilidades geométricas ----------
+function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+function angleFromVertical(p1, p2) {
+  // ángulo del vector p1->p2 respecto a la vertical (0° = alineado verticalmente)
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const rad = Math.atan2(dx, -dy);
+  return Math.abs(rad * 180 / Math.PI);
+}
+
+function levelFor(angle, thresholds) {
+  if (angle < thresholds[0]) return LEVEL.GREEN;
+  if (angle < thresholds[1]) return LEVEL.AMBER;
+  return LEVEL.RED;
+}
+
+const KP = {
+  nose: 0, leftShoulder: 5, rightShoulder: 6, leftElbow: 7, rightElbow: 8,
+  leftWrist: 9, rightWrist: 10, leftHip: 11, rightHip: 12
+};
+
+function evaluatePosture(keypoints) {
+  const byName = {};
+  keypoints.forEach(k => byName[k.name] = k);
+  const req = ['left_shoulder','right_shoulder','left_hip','right_hip','nose'];
+  for (const r of req) if (!byName[r] || byName[r].score < 0.3) return null;
+
+  const shoulderMid = mid(byName['left_shoulder'], byName['right_shoulder']);
+  const hipMid = mid(byName['left_hip'], byName['right_hip']);
+  const nose = byName['nose'];
+
+  const trunkAngle = angleFromVertical(hipMid, shoulderMid);
+  const neckAngle = angleFromVertical(shoulderMid, nose);
+
+  // brazo: usar el lado con mejor confianza
+  let armAngle = null;
+  const rightOk = byName['right_shoulder'] && byName['right_elbow'] && byName['right_elbow'].score > 0.3;
+  const leftOk = byName['left_shoulder'] && byName['left_elbow'] && byName['left_elbow'].score > 0.3;
+  if (rightOk) armAngle = angleFromVertical(byName['right_shoulder'], byName['right_elbow']);
+  else if (leftOk) armAngle = angleFromVertical(byName['left_shoulder'], byName['left_elbow']);
+  if (armAngle === null) armAngle = 0;
+
+  const trunkLevel = levelFor(trunkAngle, [15, 40]);
+  const neckLevel = levelFor(neckAngle, [10, 25]);
+  const armsLevel = levelFor(armAngle, [20, 60]);
+  const overall = Math.max(trunkLevel, neckLevel, armsLevel);
+
+  return {
+    trunk: { angle: trunkAngle, level: trunkLevel },
+    neck: { angle: neckAngle, level: neckLevel },
+    arms: { angle: armAngle, level: armsLevel },
+    overall
+  };
+}
+
+// ---------- Carga de modelo ----------
+async function ensureModel() {
+  if (modelReady) return;
+  await tf.setBackend('webgl');
+  await tf.ready();
+  detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, {
+    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+  });
+  modelReady = true;
+}
+
+// ---------- Dibujo de esqueleto ----------
+const EDGES = [
+  ['left_shoulder','right_shoulder','trunk'],
+  ['left_shoulder','left_hip','trunk'],['right_shoulder','right_hip','trunk'],
+  ['left_hip','right_hip','trunk'],
+  ['nose','left_shoulder','neck'],['nose','right_shoulder','neck'],
+  ['left_shoulder','left_elbow','arms'],['left_elbow','left_wrist','arms'],
+  ['right_shoulder','right_elbow','arms'],['right_elbow','right_wrist','arms'],
+  ['left_hip','left_knee','legs'],['right_hip','right_knee','legs'],
+  ['left_knee','left_ankle','legs'],['right_knee','right_ankle','legs']
+];
+
+function drawSkeleton(ctx, keypoints, evalRes, w, h) {
+  ctx.clearRect(0,0,w,h);
+  const byName = {};
+  keypoints.forEach(k => byName[k.name] = k);
+  const colorFor = (part) => {
+    if (!evalRes) return '#8B93A3';
+    if (part === 'trunk') return LEVEL_COLOR[evalRes.trunk.level];
+    if (part === 'neck') return LEVEL_COLOR[evalRes.neck.level];
+    if (part === 'arms') return LEVEL_COLOR[evalRes.arms.level];
+    return '#8B93A3';
+  };
+  EDGES.forEach(([a,b,part]) => {
+    const pa = byName[a], pb = byName[b];
+    if (pa && pb && pa.score > 0.25 && pb.score > 0.25) {
+      ctx.strokeStyle = colorFor(part);
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(pa.x * w / 1, pa.y * h / 1);
+      ctx.lineTo(pb.x * w / 1, pb.y * h / 1);
+      ctx.stroke();
+    }
+  });
+  keypoints.forEach(k => {
+    if (k.score > 0.25) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(k.x, k.y, 4, 0, 2*Math.PI);
+      ctx.fill();
+    }
+  });
+}
+
+// nota: MoveNet devuelve keypoints en coordenadas de píxel de la imagen de entrada,
+// así que escalamos según el tamaño real del video/canvas.
+function scaleKeypoints(keypoints, videoW, videoH, canvasW, canvasH) {
+  const scaleX = canvasW / videoW;
+  const scaleY = canvasH / videoH;
+  return keypoints.map(k => ({ ...k, x: k.x*scaleX, y: k.y*scaleY }));
+}
+
+// ---------- Actualización de UI (gauge/badges) ----------
+function updateGaugeUI(prefix, evalRes) {
+  const needle = document.getElementById(prefix === 'live' ? 'needle' : 'needle-p');
+  const label = document.getElementById(prefix === 'live' ? 'gauge-label' : 'gauge-label-p');
+  const sub = document.getElementById(prefix === 'live' ? 'gauge-sub' : 'gauge-sub-p');
+  if (!evalRes) {
+    label.textContent = 'SIN DETECCIÓN';
+    label.style.color = '#8B93A3';
+    sub.textContent = 'Ajusta encuadre e iluminación';
+    return;
+  }
+  const angles = { 0: -60, 1: 0, 2: 60 };
+  needle.style.transform = `translateX(-50%) rotate(${angles[evalRes.overall]}deg)`;
+  label.textContent = LEVEL_NAME[evalRes.overall];
+  label.style.color = LEVEL_COLOR[evalRes.overall];
+  sub.textContent = 'Tronco ' + evalRes.trunk.angle.toFixed(0) + '° · Cuello ' + evalRes.neck.angle.toFixed(0) + '° · Brazos ' + evalRes.arms.angle.toFixed(0) + '°';
+
+  const bT = document.getElementById(prefix === 'live' ? 'b-trunk' : 'bp-trunk');
+  const bN = document.getElementById(prefix === 'live' ? 'b-neck' : 'bp-neck');
+  const bA = document.getElementById(prefix === 'live' ? 'b-arms' : 'bp-arms');
+  const cls = (lv) => lv === 0 ? 'g' : lv === 1 ? 'a' : 'r';
+  bT.className = 'badge ' + cls(evalRes.trunk.level);
+  bN.className = 'badge ' + cls(evalRes.neck.level);
+  bA.className = 'badge ' + cls(evalRes.arms.level);
+  bT.querySelector('.v').textContent = evalRes.trunk.angle.toFixed(0) + '°';
+  bN.querySelector('.v').textContent = evalRes.neck.angle.toFixed(0) + '°';
+  bA.querySelector('.v').textContent = evalRes.arms.angle.toFixed(0) + '°';
+}
+
+// ---------- Cámara en vivo ----------
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const camMsg = document.getElementById('cam-msg');
+const octx = overlay.getContext('2d');
+
+document.getElementById('btn-cam').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-cam');
+  btn.disabled = true;
+  btn.textContent = 'Cargando modelo...';
+  try {
+    await ensureModel();
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    camMsg.style.display = 'none';
+    overlay.width = overlay.clientWidth;
+    overlay.height = overlay.clientHeight;
+    btn.textContent = 'Cámara activa';
+    document.getElementById('btn-record').disabled = false;
+    liveLoop();
+  } catch (err) {
+    camMsg.style.display = 'flex';
+    camMsg.textContent = 'No se pudo acceder a la cámara: ' + err.message + '. Verifica los permisos del navegador.';
+    btn.disabled = false;
+    btn.textContent = 'Activar cámara';
+  }
+});
+
+let lastLiveEval = null;
+
+async function liveLoop() {
+  if (!modelReady || video.readyState < 2) { rafId = requestAnimationFrame(liveLoop); return; }
+  const poses = await detector.estimatePoses(video, { flipHorizontal: false });
+  if (poses.length > 0) {
+    const kp = scaleKeypoints(poses[0].keypoints, video.videoWidth, video.videoHeight, overlay.width, overlay.height);
+    const evalRes = evaluatePosture(kp);
+    drawSkeleton(octx, kp, evalRes, overlay.width, overlay.height);
+    updateGaugeUI('live', evalRes);
+    lastLiveEval = evalRes;
+    if (recording && evalRes) {
+      sessions[currentSessionType].push({
+        t: Date.now() - sessionStartTime,
+        trunk: evalRes.trunk.angle, neck: evalRes.neck.angle, arms: evalRes.arms.angle,
+        level: evalRes.overall
+      });
+    }
+  } else {
+    octx.clearRect(0,0,overlay.width,overlay.height);
+    updateGaugeUI('live', null);
+  }
+  rafId = requestAnimationFrame(liveLoop);
+}
+
+// ---------- Grabación de sesiones ----------
+document.getElementById('btn-record').addEventListener('click', () => {
+  currentSessionType = document.getElementById('session-type').value;
+  sessions[currentSessionType] = [];
+  sessionStartTime = Date.now();
+  recording = true;
+  document.getElementById('rec-dot').classList.add('live');
+  document.getElementById('rec-text').textContent = 'Grabando: ' + (currentSessionType === 'sin' ? 'Sin exoesqueleto' : 'Con exoesqueleto');
+  document.getElementById('btn-record').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('session-type').disabled = true;
+});
+
+document.getElementById('btn-stop').addEventListener('click', () => {
+  recording = false;
+  document.getElementById('rec-dot').classList.remove('live');
+  document.getElementById('rec-text').textContent = 'Sesión guardada: ' + (currentSessionType === 'sin' ? 'Sin exoesqueleto' : 'Con exoesqueleto') + ' (' + sessions[currentSessionType].length + ' muestras)';
+  document.getElementById('btn-record').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  document.getElementById('session-type').disabled = false;
+  buildReport();
+});
+
+// ---------- Pestañas ----------
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'report') buildReport();
+  });
+});
+
+// ---------- Foto ----------
+const photoCanvas = document.getElementById('photo-canvas');
+const pctx = photoCanvas.getContext('2d');
+const photoMsg = document.getElementById('photo-msg');
+
+async function analyzeImageSource(imgSource, w, h) {
+  await ensureModel();
+  photoCanvas.width = w; photoCanvas.height = h;
+  pctx.drawImage(imgSource, 0, 0, w, h);
+  const poses = await detector.estimatePoses(imgSource, { flipHorizontal: false });
+  if (poses.length > 0) {
+    const evalRes = evaluatePosture(poses[0].keypoints);
+    drawSkeletonOnPhoto(poses[0].keypoints, evalRes, w, h);
+    updateGaugeUI('photo', evalRes);
+    photoMsg.style.display = 'none';
+  } else {
+    photoMsg.style.display = 'flex';
+    photoMsg.textContent = 'No se detectó una persona con suficiente claridad en la foto.';
+  }
+}
+
+function drawSkeletonOnPhoto(keypoints, evalRes, w, h) {
+  const byName = {};
+  keypoints.forEach(k => byName[k.name] = k);
+  const colorFor = (part) => {
+    if (!evalRes) return '#8B93A3';
+    if (part === 'trunk') return LEVEL_COLOR[evalRes.trunk.level];
+    if (part === 'neck') return LEVEL_COLOR[evalRes.neck.level];
+    if (part === 'arms') return LEVEL_COLOR[evalRes.arms.level];
+    return '#8B93A3';
+  };
+  EDGES.forEach(([a,b,part]) => {
+    const pa = byName[a], pb = byName[b];
+    if (pa && pb && pa.score > 0.25 && pb.score > 0.25) {
+      pctx.strokeStyle = colorFor(part);
+      pctx.lineWidth = 5;
+      pctx.beginPath();
+      pctx.moveTo(pa.x, pa.y);
+      pctx.lineTo(pb.x, pb.y);
+      pctx.stroke();
+    }
+  });
+}
+
+document.getElementById('btn-snap').addEventListener('click', async () => {
+  try {
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    }
+    const tmpVideo = document.createElement('video');
+    tmpVideo.srcObject = stream;
+    tmpVideo.muted = true;
+    await tmpVideo.play();
+    await new Promise(r => setTimeout(r, 300));
+    await analyzeImageSource(tmpVideo, tmpVideo.videoWidth, tmpVideo.videoHeight);
+  } catch (err) {
+    photoMsg.style.display = 'flex';
+    photoMsg.textContent = 'No se pudo acceder a la cámara: ' + err.message;
+  }
+});
+
+document.getElementById('btn-upload').addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => analyzeImageSource(img, img.naturalWidth, img.naturalHeight);
+  img.src = URL.createObjectURL(file);
+});
+
+// ---------- Informe comparativo ----------
+let chartRisk = null, chartAngles = null;
+
+function summarizeSession(samples) {
+  if (!samples || samples.length === 0) return null;
+  const durationSec = samples[samples.length-1].t / 1000;
+  const counts = { 0:0, 1:0, 2:0 };
+  let sumT=0,sumN=0,sumA=0;
+  samples.forEach(s => { counts[s.level]++; sumT+=s.trunk; sumN+=s.neck; sumA+=s.arms; });
+  const n = samples.length;
+  return {
+    durationSec,
+    pctGreen: (counts[0]/n*100),
+    pctAmber: (counts[1]/n*100),
+    pctRed: (counts[2]/n*100),
+    avgTrunk: sumT/n, avgNeck: sumN/n, avgArms: sumA/n
+  };
+}
+
+function fmtPct(v){ return v===undefined ? '--' : v.toFixed(0)+'%'; }
+function fmtDeg(v){ return v===undefined ? '--' : v.toFixed(0)+'°'; }
+function fmtDur(s){ return s===undefined ? '--' : s.toFixed(0)+' s'; }
+
+function buildReport() {
+  const sinSum = summarizeSession(sessions.sin);
+  const conSum = summarizeSession(sessions.con);
+
+  const set = (id, val) => document.getElementById(id).textContent = val;
+  set('r-sin-dur', sinSum ? fmtDur(sinSum.durationSec) : '--');
+  set('r-sin-red', sinSum ? fmtPct(sinSum.pctRed) : '--');
+  set('r-sin-amber', sinSum ? fmtPct(sinSum.pctAmber) : '--');
+  set('r-sin-green', sinSum ? fmtPct(sinSum.pctGreen) : '--');
+  set('r-sin-trunk', sinSum ? fmtDeg(sinSum.avgTrunk) : '--');
+  set('r-sin-neck', sinSum ? fmtDeg(sinSum.avgNeck) : '--');
+  set('r-sin-arms', sinSum ? fmtDeg(sinSum.avgArms) : '--');
+
+  set('r-con-dur', conSum ? fmtDur(conSum.durationSec) : '--');
+  set('r-con-red', conSum ? fmtPct(conSum.pctRed) : '--');
+  set('r-con-amber', conSum ? fmtPct(conSum.pctAmber) : '--');
+  set('r-con-green', conSum ? fmtPct(conSum.pctGreen) : '--');
+  set('r-con-trunk', conSum ? fmtDeg(conSum.avgTrunk) : '--');
+  set('r-con-neck', conSum ? fmtDeg(conSum.avgNeck) : '--');
+  set('r-con-arms', conSum ? fmtDeg(conSum.avgArms) : '--');
+
+  const ctx1 = document.getElementById('chart-risk').getContext('2d');
+  if (chartRisk) chartRisk.destroy();
+  chartRisk = new Chart(ctx1, {
+    type: 'bar',
+    data: {
+      labels: ['Verde %', 'Amarillo %', 'Rojo %'],
+      datasets: [
+        { label: 'Sin exoesqueleto', backgroundColor: '#8B93A3', data: [sinSum?sinSum.pctGreen:0, sinSum?sinSum.pctAmber:0, sinSum?sinSum.pctRed:0] },
+        { label: 'Con exoesqueleto', backgroundColor: '#FF6A39', data: [conSum?conSum.pctGreen:0, conSum?conSum.pctAmber:0, conSum?conSum.pctRed:0] }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { title: { display: true, text: '% tiempo en cada nivel de riesgo', color:'#EDEEF1' }, legend: { labels: { color:'#EDEEF1' } } },
+      scales: { x: { ticks:{color:'#8B93A3'}, grid:{color:'#333D4D'} }, y: { ticks:{color:'#8B93A3'}, grid:{color:'#333D4D'} } }
+    }
+  });
+
+  const ctx2 = document.getElementById('chart-angles').getContext('2d');
+  if (chartAngles) chartAngles.destroy();
+  chartAngles = new Chart(ctx2, {
+    type: 'bar',
+    data: {
+      labels: ['Tronco', 'Cuello', 'Brazos'],
+      datasets: [
+        { label: 'Sin exoesqueleto (°)', backgroundColor: '#8B93A3', data: [sinSum?sinSum.avgTrunk:0, sinSum?sinSum.avgNeck:0, sinSum?sinSum.avgArms:0] },
+        { label: 'Con exoesqueleto (°)', backgroundColor: '#FF6A39', data: [conSum?conSum.avgTrunk:0, conSum?conSum.avgNeck:0, conSum?conSum.avgArms:0] }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { title: { display: true, text: 'Ángulo promedio por articulación', color:'#EDEEF1' }, legend: { labels: { color:'#EDEEF1' } } },
+      scales: { x: { ticks:{color:'#8B93A3'}, grid:{color:'#333D4D'} }, y: { ticks:{color:'#8B93A3'}, grid:{color:'#333D4D'} } }
+    }
+  });
+
+  const recoBox = document.getElementById('reco-box');
+  if (sinSum && conSum) {
+    const redDelta = sinSum.pctRed - conSum.pctRed;
+    const trunkDelta = sinSum.avgTrunk - conSum.avgTrunk;
+    let lines = [];
+    lines.push('<b>Comparativo:</b> con exoesqueleto el tiempo en riesgo alto (rojo) fue ' +
+      (redDelta > 0 ? 'menor en ' + redDelta.toFixed(0) + ' puntos porcentuales' : (redDelta < 0 ? 'mayor en ' + Math.abs(redDelta).toFixed(0) + ' puntos porcentuales' : 'igual')) + '.');
+    lines.push('El ángulo promedio de tronco ' + (trunkDelta > 0 ? 'se redujo ' + trunkDelta.toFixed(0) + '°' : (trunkDelta < 0 ? 'aumentó ' + Math.abs(trunkDelta).toFixed(0) + '°' : 'se mantuvo igual')) + ' respecto a la sesión sin exoesqueleto.');
+    if (redDelta > 5) {
+      lines.push('<b>Recomendación:</b> los datos sugieren un beneficio postural del exoesqueleto en esta tarea; se recomienda validar con más repeticiones y distintos trabajadores antes de generalizar.');
+    } else if (redDelta < -5) {
+      lines.push('<b>Recomendación:</b> el exoesqueleto no mostró beneficio postural en esta sesión; revisar ajuste/talla del equipo y técnica de uso antes de descartarlo.');
+    } else {
+      lines.push('<b>Recomendación:</b> la diferencia fue baja; se sugiere repetir la comparación con una tarea de mayor exigencia o mayor duración para obtener una conclusión más robusta.');
+    }
+    if (sinSum.pctRed > 30 || conSum.pctRed > 30) {
+      lines.push('En ambas condiciones el tiempo en postura de riesgo alto es considerable; evaluar rediseño de la tarea (altura de trabajo, rotación de puestos, pausas activas) independientemente del uso del exoesqueleto.');
+    }
+    recoBox.innerHTML = lines.join('<br><br>');
+  } else {
+    recoBox.textContent = 'Graba al menos una sesión "sin exoesqueleto" y una "con exoesqueleto" en la pestaña En vivo para generar aquí las recomendaciones automáticas.';
+  }
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  sessions = { sin: [], con: [] };
+  buildReport();
+});
+</script>
+</body>
+</html>
